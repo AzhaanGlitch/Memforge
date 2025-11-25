@@ -2,7 +2,6 @@ import express from 'express';
 import mongoose from 'mongoose';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import OpenAI from 'openai';
 import Deck from './models/Deck.js';
 
 dotenv.config();
@@ -14,18 +13,10 @@ const PORT = process.env.PORT || 5000;
 app.use(cors());
 app.use(express.json());
 
-// Initialize OpenAI
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
-
 // MongoDB Connection
-mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/memforge', {
-  useNewUrlParser: true,
-  useUnifiedTopology: true,
-})
-  .then(() => console.log('✅ MongoDB connected successfully'))
-  .catch((err) => console.error('❌ MongoDB connection error:', err));
+mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/memforge')
+  .then(() => console.log('MongoDB connected successfully'))
+  .catch((err) => console.error('MongoDB connection error:', err));
 
 // Routes
 
@@ -34,7 +25,7 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'OK', message: 'Server is running' });
 });
 
-// Generate flashcards from text using OpenAI
+// Generate flashcards from text using Google Gemini API
 app.post('/api/generate-flashcards', async (req, res) => {
   try {
     const { text } = req.body;
@@ -44,6 +35,14 @@ app.post('/api/generate-flashcards', async (req, res) => {
     }
 
     console.log('Generating flashcards for text:', text.substring(0, 100) + '...');
+
+    const API_KEY = process.env.GEMINI_API_KEY;
+    
+    if (!API_KEY) {
+      return res.status(500).json({ 
+        error: 'API key not configured. Please add GEMINI_API_KEY to your .env file' 
+      });
+    }
 
     const prompt = `Generate flashcards from the following text. Create clear, concise question-answer pairs that will help someone study and remember the key concepts. Return the response as a JSON array with objects containing "front" (the question) and "back" (the answer) properties.
 
@@ -55,28 +54,43 @@ Return ONLY a valid JSON array in this exact format, with no additional text or 
   {"front": "Question 2", "back": "Answer 2"}
 ]`;
 
-    const completion = await openai.chat.completions.create({
-      model: 'gpt-3.5-turbo',
-      messages: [
-        {
-          role: 'system',
-          content: 'You are a helpful assistant that creates educational flashcards. Always respond with valid JSON only, no markdown or extra text.',
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=${API_KEY}`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
         },
-        {
-          role: 'user',
-          content: prompt,
-        },
-      ],
-      temperature: 0.7,
-      max_tokens: 1000,
-    });
+        body: JSON.stringify({
+          contents: [
+            {
+              parts: [
+                {
+                  text: prompt,
+                },
+              ],
+            },
+          ],
+          generationConfig: {
+            temperature: 0.7,
+            maxOutputTokens: 1000,
+          },
+        }),
+      }
+    );
 
-    let flashcardsText = completion.choices[0].message.content.trim();
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(`Gemini API error: ${errorData.error?.message || 'Unknown error'}`);
+    }
+
+    const data = await response.json();
+    let flashcardsText = data.candidates[0].content.parts[0].text.trim();
     
     // Remove markdown code blocks if present
     flashcardsText = flashcardsText.replace(/```json\n?/g, '').replace(/```\n?/g, '');
     
-    console.log('OpenAI response:', flashcardsText);
+    console.log('Gemini response:', flashcardsText);
 
     // Parse the JSON response
     const flashcards = JSON.parse(flashcardsText);
@@ -94,7 +108,7 @@ Return ONLY a valid JSON array in this exact format, with no additional text or 
       throw new Error('No valid flashcards could be generated');
     }
 
-    console.log(`✅ Generated ${validFlashcards.length} flashcards`);
+    console.log(`Generated ${validFlashcards.length} flashcards`);
 
     res.json({
       flashcards: validFlashcards,
@@ -161,7 +175,7 @@ app.post('/api/decks', async (req, res) => {
     });
 
     await deck.save();
-    console.log('✅ Deck saved:', deck.name);
+    console.log('Deck saved:', deck.name);
     res.status(201).json(deck);
   } catch (error) {
     console.error('Error creating deck:', error);
@@ -184,7 +198,7 @@ app.put('/api/decks/:id', async (req, res) => {
       return res.status(404).json({ error: 'Deck not found' });
     }
 
-    console.log('✅ Deck updated:', deck.name);
+    console.log('Deck updated:', deck.name);
     res.json(deck);
   } catch (error) {
     console.error('Error updating deck:', error);
@@ -201,7 +215,7 @@ app.delete('/api/decks/:id', async (req, res) => {
       return res.status(404).json({ error: 'Deck not found' });
     }
 
-    console.log('✅ Deck deleted:', deck.name);
+    console.log('Deck deleted:', deck.name);
     res.json({ message: 'Deck deleted successfully' });
   } catch (error) {
     console.error('Error deleting deck:', error);
@@ -217,6 +231,6 @@ app.use((err, req, res, next) => {
 
 // Start server
 app.listen(PORT, () => {
-  console.log(`🚀 Server running on http://localhost:${PORT}`);
-  console.log(`📝 API endpoints available at http://localhost:${PORT}/api`);
+  console.log(`Server running on http://localhost:${PORT}`);
+  console.log(`API endpoints available at http://localhost:${PORT}/api`);
 });
