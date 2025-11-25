@@ -54,8 +54,9 @@ Return ONLY a valid JSON array in this exact format, with no additional text or 
   {"front": "Question 2", "back": "Answer 2"}
 ]`;
 
+    // Updated to use gemini-1.5-flash model which is the current stable model
     const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=${API_KEY}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${API_KEY}`,
       {
         method: 'POST',
         headers: {
@@ -73,7 +74,9 @@ Return ONLY a valid JSON array in this exact format, with no additional text or 
           ],
           generationConfig: {
             temperature: 0.7,
-            maxOutputTokens: 1000,
+            maxOutputTokens: 2000,
+            topP: 0.8,
+            topK: 40,
           },
         }),
       }
@@ -81,10 +84,17 @@ Return ONLY a valid JSON array in this exact format, with no additional text or 
 
     if (!response.ok) {
       const errorData = await response.json();
+      console.error('Gemini API Error:', errorData);
       throw new Error(`Gemini API error: ${errorData.error?.message || 'Unknown error'}`);
     }
 
     const data = await response.json();
+    
+    // Check if we got a valid response
+    if (!data.candidates || !data.candidates[0] || !data.candidates[0].content) {
+      throw new Error('Invalid response from Gemini API');
+    }
+
     let flashcardsText = data.candidates[0].content.parts[0].text.trim();
     
     // Remove markdown code blocks if present
@@ -93,7 +103,13 @@ Return ONLY a valid JSON array in this exact format, with no additional text or 
     console.log('Gemini response:', flashcardsText);
 
     // Parse the JSON response
-    const flashcards = JSON.parse(flashcardsText);
+    let flashcards;
+    try {
+      flashcards = JSON.parse(flashcardsText);
+    } catch (parseError) {
+      console.error('Failed to parse JSON:', flashcardsText);
+      throw new Error('Failed to parse AI response as JSON');
+    }
 
     if (!Array.isArray(flashcards) || flashcards.length === 0) {
       throw new Error('Invalid flashcards format received from AI');
